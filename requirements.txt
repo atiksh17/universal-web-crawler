@@ -1,0 +1,29 @@
+# Pinned to the exact versions validated on Python 3.12.
+# IMPORTANT: use Python 3.12 — nodriver fails to import on 3.14.
+
+# Core API + runtime
+fastapi==0.136.3
+uvicorn[standard]==0.49.0
+pydantic==2.13.4
+pydantic-settings==2.14.1
+
+# L1 — wire-level browser impersonation (no browser)
+curl_cffi==0.15.0
+
+# HTML parsing for the classifier (fast, Rust-backed) + phase-2 extraction
+selectolax==0.4.10
+
+# L2 — headless browser (modern undetected Chrome)
+nodriver==0.50.3
+
+# L4 — Bright Data Web Unlocker HTTP client
+httpx==0.28.1
+
+# Dev store
+aiosqlite==0.22.1
+
+# --- Optional tiers (install only when you enable them) ---
+# L2B  camoufox        # pip install camoufox[geoip] ; python -m camoufox fetch
+# L2C  byparr          # run as a separate service, point CRAWLER_BYPARR_URL at it
+# Queue (prod)         # pip install arq redis
+# Store (prod)         # pip install asyncpg

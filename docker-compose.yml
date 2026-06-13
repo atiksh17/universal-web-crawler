@@ -1,0 +1,18 @@
+# Parity container — identical on laptop and VPS. `docker compose up`.
+# Redis is optional: the dev queue backend is in-memory. Enable it (and set
+# CRAWLER_QUEUE_BACKEND=redis) only when you move to the arq worker for prod.
+services:
+  api:
+    build: .
+    ports:
+      - "8000:8000"
+    env_file:
+      - .env
+    # VPS scaling lives in .env (CRAWLER_GLOBAL_CONCURRENCY, CRAWLER_WORKER_COUNT, ...)
+    shm_size: "1gb"        # headless Chrome needs shared memory
+    restart: unless-stopped
+
+  # redis:
+  #   image: redis:7-alpine
+  #   ports: ["6379:6379"]
+  #   restart: unless-stopped
