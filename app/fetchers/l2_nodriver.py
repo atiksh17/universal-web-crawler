@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import asyncio
+import shutil
+import tempfile
 import time
 
 from ..models import FetchResult
@@ -57,10 +59,17 @@ class L2Nodriver(Fetcher):
         # (VPS optimization: pool with proper per-use tab reset.)
         self._sema = asyncio.Semaphore(max(1, browser_concurrency))
 
-    async def _launch(self):
-        args = ["--disable-dev-shm-usage", "--disable-gpu"]
-        return await uc.start(headless=self.headless, sandbox=False,
-                              browser_args=args, browser_executable_path=self.chrome_path)
+    async def _launch(self, user_data_dir: str):
+        # Unique profile dir per launch = real isolation between concurrent browsers.
+        # Without it, instances sharing one profile collide on Chromium's SingletonLock
+        # (only one boots its CDP port; the rest exit -> "Failed to connect to browser").
+        # NOTE: this only holds on a STANDALONE Chrome/Chromium. snap chromium ignores
+        # --user-data-dir and forces one shared profile -> use a non-snap binary on the VPS.
+        args = ["--disable-dev-shm-usage", "--disable-gpu",
+                "--no-first-run", "--no-default-browser-check"]
+        return await uc.start(headless=self.headless, sandbox=False, browser_args=args,
+                              browser_executable_path=self.chrome_path,
+                              user_data_dir=user_data_dir)
 
     async def _stealth(self, tab) -> None:
         """Enable network + strip 'HeadlessChrome' from the UA (the #1 headless tell)."""
@@ -104,8 +113,9 @@ class L2Nodriver(Fetcher):
         t0 = time.monotonic()
         async with self._sema:
             browser = None
+            profile = tempfile.mkdtemp(prefix="cr-prof-")
             try:
-                browser = await self._launch()
+                browser = await self._launch(profile)
                 res = await asyncio.wait_for(self._do(browser, url), timeout=self.nav_timeout_s + 10)
                 res.elapsed_ms = int((time.monotonic() - t0) * 1000)
                 return res
@@ -121,6 +131,7 @@ class L2Nodriver(Fetcher):
                         browser.stop()
                     except Exception:
                         pass
+                shutil.rmtree(profile, ignore_errors=True)  # don't leak temp profiles
 
     async def aclose(self) -> None:
         return None
