@@ -63,10 +63,10 @@ adjust the list in `Dockerfile` (Debian bookworm names).
 > **Requires Python 3.12.** nodriver fails to import on 3.14. The Dockerfile pins it; for
 > native installs use `python3.12`.
 >
-> **Do NOT use snap chromium on a bare VPS.** Snap confines Chrome to one shared profile
-> dir and ignores per-launch `--user-data-dir`, so concurrent browser launches collide on
-> Chromium's SingletonLock and throw "Failed to connect to browser" (one wins, the rest die).
-> Install standalone Chrome instead:
+> **Do NOT use snap chromium on a bare VPS.** Snap's cold start (squashfs mount + first-run)
+> is slow — and under concurrent launches it exceeds nodriver's ~3s connect window, so cold
+> browsers throw "Failed to connect to browser" (warm works — that asymmetry is the tell).
+> Standalone Chrome cold-starts sub-second and fits the window. Install it instead:
 > ```bash
 > wget https://dl.google.com/linux/direct/google-chrome-stable_current_amd64.deb
 > apt-get install -y ./google-chrome-stable_current_amd64.deb

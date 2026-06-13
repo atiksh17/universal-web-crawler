@@ -60,11 +60,13 @@ class L2Nodriver(Fetcher):
         self._sema = asyncio.Semaphore(max(1, browser_concurrency))
 
     async def _launch(self, user_data_dir: str):
-        # Unique profile dir per launch = real isolation between concurrent browsers.
-        # Without it, instances sharing one profile collide on Chromium's SingletonLock
-        # (only one boots its CDP port; the rest exit -> "Failed to connect to browser").
-        # NOTE: this only holds on a STANDALONE Chrome/Chromium. snap chromium ignores
-        # --user-data-dir and forces one shared profile -> use a non-snap binary on the VPS.
+        # Explicit temp profile per launch + cleanup on stop. nodriver already makes a temp
+        # profile, but passing our own guarantees teardown -> no leaked profiles at volume.
+        # This is HYGIENE, not the cure for the VPS "Failed to connect to browser" bug.
+        # That bug is timing: snap chromium's slow cold start (squashfs mount + first-run)
+        # exceeds nodriver's ~3s connect window, badly under concurrent CPU/IO contention
+        # (warm = sub-second = fine; cold-concurrent = fails). Real fix = non-snap Chrome
+        # (standalone google-chrome-stable), which cold-starts sub-second. See README.
         args = ["--disable-dev-shm-usage", "--disable-gpu",
                 "--no-first-run", "--no-default-browser-check"]
         return await uc.start(headless=self.headless, sandbox=False, browser_args=args,
