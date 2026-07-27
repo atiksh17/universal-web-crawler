@@ -40,7 +40,7 @@ def main():
     urls = [l.strip() for l in open(URLS_FILE) if l.strip()]
     n = len(urls)
     print(f"submitting {n} URLs to {BASE} ...")
-    job = api("POST", "/scrape/bulk", {"urls": urls})["job_id"]
+    job = api("POST", "/crawl/bulk", {"urls": urls})["job_id"]
     print(f"job_id={job}\n")
 
     t0 = time.time()

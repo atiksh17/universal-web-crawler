@@ -5,8 +5,8 @@ touches (escalator, fetchers, classifier, jobs, store, shaping) lives in this pa
 
 Routes:
   GET  /health                  tier status + escalation order
-  POST /scrape                  single URL, synchronous, shaped payload
-  POST /scrape/bulk             many URLs, async job -> job_id
+  POST /crawl                   single URL, synchronous, shaped payload
+  POST /crawl/bulk              many URLs, async job -> job_id
   GET  /jobs/{id}               progress (state/total/done/ok_count + per-URL summary)
   GET  /jobs/{id}/results       final shaped results
 
@@ -92,8 +92,8 @@ async def health():
     return {"ok": True, "tiers": esc.tier_status(), "order": esc.order}
 
 
-@app.post("/scrape")
-async def scrape(req: ScrapeRequest):
+@app.post("/crawl")
+async def crawl(req: ScrapeRequest):
     """Single URL, synchronous. Returns the shaped payload."""
     opts = _opts(req)
     outcome = await app.state.jobs.crawl_one(req.url)
@@ -102,13 +102,30 @@ async def scrape(req: ScrapeRequest):
     return out
 
 
-@app.post("/scrape/bulk", status_code=202)
-async def scrape_bulk(req: BulkRequest):
+@app.post("/crawl/bulk", status_code=202)
+async def crawl_bulk(req: BulkRequest):
     """Bulk: dump URLs, get a job_id. Shaping flags are applied at /jobs/{id}/results."""
     opts = _opts(req)
     job_id = await app.state.jobs.submit_bulk(req.urls)
     app.state.job_opts[job_id] = opts
     return {"job_id": job_id, "total": len(req.urls)}
+
+
+# Back-compat: the routes were named /scrape and /scrape/bulk until 2026-07-27.
+# "Scrape" overloaded a term that means something else in our pipeline, so the
+# canonical names are now /crawl and /crawl/bulk. These aliases keep any existing
+# caller working; they are deprecated and can be dropped once nothing uses them.
+app.add_api_route(
+    "/scrape", crawl, methods=["POST"], include_in_schema=False, deprecated=True
+)
+app.add_api_route(
+    "/scrape/bulk",
+    crawl_bulk,
+    methods=["POST"],
+    status_code=202,
+    include_in_schema=False,
+    deprecated=True,
+)
 
 
 @app.get("/jobs/{job_id}")

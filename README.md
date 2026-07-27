@@ -30,7 +30,7 @@ nano .env                     # set CRAWLER_CHROME_PATH; add L4 key/zone if you 
 ```
 
 ```bash
-curl -X POST localhost:8000/scrape -H 'content-type: application/json' \
+curl -X POST localhost:8000/crawl -H 'content-type: application/json' \
   -d '{"url":"https://example.com"}'
 ```
 
@@ -160,11 +160,11 @@ guide: [`usage.md`](usage.md).** Quick reference:
 
 ```bash
 # single — synchronous; returns shaped payload (domain, markdown, quality, bot_blocked, tier)
-curl -X POST localhost:8000/scrape -H 'content-type: application/json' \
+curl -X POST localhost:8000/crawl -H 'content-type: application/json' \
   -d '{"url":"https://example.com", "meta":true, "endpoints":true}'
 
 # bulk — dump URLs, get a job_id; shaping flags remembered for /results
-curl -X POST localhost:8000/scrape/bulk -H 'content-type: application/json' \
+curl -X POST localhost:8000/crawl/bulk -H 'content-type: application/json' \
   -d '{"urls":["https://a.com","https://b.com"], "html":true}'
 
 curl localhost:8000/jobs/<job_id>             # progress: state/total/done/ok_count

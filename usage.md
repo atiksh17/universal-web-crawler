@@ -10,7 +10,7 @@ hangs off its root.
 **Base URL: `http://localhost:8000`** — substitute your own host/port, or whatever path prefix
 your reverse proxy adds if you put one in front.
 
-> **Endpoints:** `POST /scrape` (single, sync), `POST /scrape/bulk` (many, async),
+> **Endpoints:** `POST /crawl` (single, sync), `POST /crawl/bulk` (many, async),
 > `GET /jobs/{id}` (progress), `GET /jobs/{id}/results` (final), `GET /health` (tier status).
 
 ---
@@ -20,7 +20,7 @@ your reverse proxy adds if you put one in front.
 Best for one-off lookups. Blocks until the page is scraped, returns the shaped payload.
 
 ```bash
-curl -X POST http://localhost:8000/scrape \
+curl -X POST http://localhost:8000/crawl \
   -H 'content-type: application/json' \
   -d '{"url":"https://example.com"}'
 ```
@@ -43,7 +43,7 @@ then fetch the shaped results. The system batches/throttles/escalates internally
 
 ```bash
 # 1. submit
-curl -X POST http://localhost:8000/scrape/bulk \
+curl -X POST http://localhost:8000/crawl/bulk \
   -H 'content-type: application/json' \
   -d '{"urls":["https://a.com","https://b.com"], "meta":true, "endpoints":true}'
 # -> {"job_id":"abc123...","total":2}
@@ -88,25 +88,25 @@ Add **optional** fields by setting flags in the request body. All default `false
 
 Markdown + meta tags + link tree:
 ```bash
-curl -X POST http://localhost:8000/scrape -H 'content-type: application/json' \
+curl -X POST http://localhost:8000/crawl -H 'content-type: application/json' \
   -d '{"url":"https://example.com", "meta":true, "endpoints":true}'
 ```
 
 Full raw HTML:
 ```bash
-curl -X POST http://localhost:8000/scrape -H 'content-type: application/json' \
+curl -X POST http://localhost:8000/crawl -H 'content-type: application/json' \
   -d '{"url":"https://example.com", "html":true}'
 ```
 
 Only a scoped slice of HTML (e.g. just the pricing block):
 ```bash
-curl -X POST http://localhost:8000/scrape -H 'content-type: application/json' \
+curl -X POST http://localhost:8000/crawl -H 'content-type: application/json' \
   -d '{"url":"https://example.com", "html":true, "selector":".prices"}'
 ```
 
 Bulk with shaping (flags remembered, applied at `/results`):
 ```bash
-curl -X POST http://localhost:8000/scrape/bulk -H 'content-type: application/json' \
+curl -X POST http://localhost:8000/crawl/bulk -H 'content-type: application/json' \
   -d '{"urls":["https://a.com","https://b.com"], "footerHtml":true, "html":true}'
 ```
 
