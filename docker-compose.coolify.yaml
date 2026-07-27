@@ -25,3 +25,15 @@ services:
     # this. Symptom if lost: L2 fails while L1 keeps working.
     shm_size: "1gb"
     restart: unless-stopped
+    # Compose deployments need the healthcheck HERE — Coolify's app-level
+    # health-check setting only applies to the Dockerfile build pack, so without
+    # this the dashboard reports `running:unknown` forever and can't tell a
+    # wedged container from a working one. Needs `curl`, which the Dockerfile
+    # installs for exactly this reason.
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      # Chromium + deps make the first boot slow; don't fail during it.
+      start_period: 40s
