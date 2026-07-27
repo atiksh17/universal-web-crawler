@@ -18,17 +18,27 @@ echo ">> Creating venv + installing pinned deps..."
 .venv/bin/pip install --upgrade pip >/dev/null
 .venv/bin/pip install -r requirements.txt
 
-echo ">> Locating Chromium..."
+echo ">> Locating Chrome/Chromium..."
+# Prefer standalone google-chrome-stable. On Ubuntu, `apt install chromium` installs the
+# SNAP, whose slow cold start exceeds nodriver's ~3s connect window under concurrency
+# ("Failed to connect to browser", cold-only — warm works). See README.
 CHROME=""
-if command -v chromium >/dev/null; then CHROME="$(command -v chromium)";
-elif command -v chromium-browser >/dev/null; then CHROME="$(command -v chromium-browser)";
-else
-  echo "   Installing chromium (needs sudo)..."
-  if command -v apt-get >/dev/null; then
-    sudo apt-get update && (sudo apt-get install -y chromium || sudo apt-get install -y chromium-browser) || true
-    CHROME="$(command -v chromium || command -v chromium-browser || true)"
+for c in google-chrome-stable google-chrome chromium chromium-browser; do
+  if command -v "$c" >/dev/null; then CHROME="$(command -v "$c")"; break; fi
+done
+if [ -z "$CHROME" ] && command -v apt-get >/dev/null; then
+  echo "   Installing google-chrome-stable (needs sudo)..."
+  TMPDEB="$(mktemp -d)/chrome.deb"
+  if curl -fsSL -o "$TMPDEB" https://dl.google.com/linux/direct/google-chrome-stable_current_amd64.deb; then
+    sudo apt-get update && sudo apt-get install -y "$TMPDEB" || true
+    CHROME="$(command -v google-chrome-stable || true)"
   fi
+  rm -f "$TMPDEB"
 fi
+case "$CHROME" in
+  /snap/*) echo "   !! WARNING: that is the SNAP chromium — L2 will fail on cold starts."
+           echo "      Install standalone Chrome and set CRAWLER_CHROME_PATH to it." ;;
+esac
 
 [ -f .env ] || cp .env.example .env
 

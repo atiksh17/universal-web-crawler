@@ -6,3 +6,8 @@ __pycache__/
 venv/
 chrome/
 node_modules/
+
+# Local benchmark inputs (your own URL lists) — keep target lists out of the repo.
+*_urls.txt
+random_*.txt
+vc_pe_*.txt

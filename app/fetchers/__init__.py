@@ -11,7 +11,6 @@ from .l1_curl import L1Curl
 from .l2_nodriver import L2Nodriver
 from .l2b_camoufox import L2BCamoufox
 from .l2c_byparr import L2CByparr
-from .l3_proxy import L3ProxyBrowser
 from .l4_unlocker import L4Unlocker
 
 
@@ -34,12 +33,6 @@ def build_fetchers(s: Settings) -> dict[str, Fetcher]:
             )
         elif tier == "L2C":
             registry[tier] = L2CByparr(byparr_url=s.byparr_url, timeout=s.nav_timeout_s)
-        elif tier == "L3":
-            registry[tier] = L3ProxyBrowser(
-                headless=s.headless, nav_timeout_s=s.nav_timeout_s,
-                settle_ms=s.settle_ms, block_resources=s.block_resources,
-                chrome_path=s.chrome_path,
-            )
         elif tier == "L4":
             registry[tier] = L4Unlocker(
                 api_url=s.web_unlocker_url, key=s.web_unlocker_key, zone=s.web_unlocker_zone,

@@ -30,9 +30,10 @@ class Settings(BaseSettings):
 
     # Classifier thresholds
     min_text_len: int = 200          # L1: below this (+ scripts) => empty shell
-    min_render_text_len: int = 120   # browser tiers: minimum substantive text
+    min_render_text_len: int = 500   # browser tiers: minimum substantive text
+    min_anchors: int = 8             # same-origin links that count as a positive "real nav" signal
 
-    # L3 — per-IP static residential proxies
+    # (legacy) per-IP static residential proxies — proxy tier retired; kept for ProxyPool API
     proxies: str = ""  # "http://user:pass@ip:port,http://user:pass@ip2:port"
 
     # L2C — Byparr service

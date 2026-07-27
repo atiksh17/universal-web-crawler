@@ -7,9 +7,9 @@ from .models import FetchResult, Outcome
 from .proxy import ProxyPool
 from .signatures import CAPTCHA_SIGNATURES
 
-# Tiers that use a residential proxy from the pool.
-PROXY_TIERS = {"L3"}
-# Tiers that solve captcha challenges (an IP swap won't).
+# Residential-proxy tier retired (L3 is now the free squeeze tier). Empty = no proxy routing.
+PROXY_TIERS: set[str] = set()
+# Tiers that solve captcha challenges (an IP swap or free squeeze won't).
 CAPTCHA_TIERS = ["L2C", "L4"]
 
 
@@ -36,12 +36,11 @@ class Escalator:
         """Given the current tier and why it failed, what remains to try (in order)."""
         idx = self.order.index(current)
         remaining = self.order[idx + 1:]
-        # Captcha detected: jump to the first available captcha solver, skip proxy-only tiers.
+        # Captcha detected: only a solver clears it. Skip the free squeeze tier (wait/retry/
+        # stealth can't solve a human-captcha) and jump straight to the captcha solvers (L2C/L4).
         sig = last_reason.split(":", 1)[1] if last_reason.startswith("block:") else ""
         if sig in CAPTCHA_SIGNATURES:
-            preferred = [t for t in remaining if t in CAPTCHA_TIERS]
-            others = [t for t in remaining if t not in CAPTCHA_TIERS and t not in PROXY_TIERS]
-            return preferred + others
+            return [t for t in remaining if t in CAPTCHA_TIERS]
         return remaining
 
     async def _run_tier(self, tier: str, url: str) -> FetchResult:
@@ -69,6 +68,7 @@ class Escalator:
                 ok, reason = classify(
                     res, min_text_len=self.s.min_text_len,
                     min_render_text_len=self.s.min_render_text_len,
+                    min_anchors=self.s.min_anchors,
                 )
             else:
                 ok, reason = False, res.reason

@@ -12,11 +12,14 @@ import asyncio
 from app.config import get_settings
 from app.escalator import Escalator
 
-# (label, url, expectation)
+# (label, url, expectation) — verified live; these are what a healthy install prints.
 SAMPLES = [
-    ("static_html", "https://example.com", "L1 should suffice"),
-    ("js_rendered", "https://quotes.toscrape.com/js/", "L1 thin -> L2 renders"),
-    ("plain_blog", "https://news.ycombinator.com", "L1 should suffice"),
+    ("real_content", "https://www.a16z.com", "ok at L1 (no browser needed)"),
+    ("js_rendered", "https://quotes.toscrape.com/js/", "L1 thin -> L2 renders -> ok"),
+    # Deliberate negative: a page with no same-origin links, no landmark and no structured
+    # data cannot be told apart from an interstitial, so the gate rejects it rather than
+    # risk false data. ok=False here is CORRECT, not a broken install.
+    ("thin_page", "https://example.com", "rejected by design -> ok=False"),
 ]
 
 
