@@ -2,10 +2,13 @@
 FROM python:3.12-slim
 
 # Chromium + libs for nodriver (L2). Same browser the VPS runs — full parity.
+# `curl` is not for the crawler itself — it is what container healthchecks shell
+# out to. Without it an orchestrator (Coolify, compose, k8s) marks a perfectly
+# healthy app unhealthy and rolls the deploy back.
 RUN apt-get update && apt-get install -y --no-install-recommends \
     chromium fonts-liberation libnss3 libatk-bridge2.0-0 libatk1.0-0 \
     libcups2 libgtk-3-0 libxss1 libasound2 libgbm1 libxshmfence1 \
-    ca-certificates \
+    ca-certificates curl \
     && rm -rf /var/lib/apt/lists/*
 
 # nodriver finds Chrome here (config default; override via .env if needed).
