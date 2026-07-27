@@ -51,24 +51,28 @@ is a private backing service, like Postgres — not a second front door.
 | Project | **Projects** (`zvlqskt5cxzoqcwu67kwmwvr`) — ours, not `Apps`/`Core` |
 | Environment | production (`ni5rponq8106e2wxa50mts4l`) |
 | Application | **web-crawler** (`pq63yae6rk2uj6bvv38po9yb`) |
-| Source | `github.com/atiksh17/universal-web-crawler`, branch `main`, push-to-deploy |
-| Build | Dockerfile (in repo) |
+| Source | `github.com/atiksh17/universal-web-crawler`, branch **`master`**, push-to-deploy |
+| Build | **Docker Compose** — `/docker-compose.coolify.yaml` |
+| Internal hostname | **`web-crawler`** — stable across redeploys |
 | Port | 8000, **not published to the host** |
 | Domain | **none — deliberately private** |
-| Health check | `GET /health` |
-| Docker options | `--shm-size=1g` |
+| Health check | `GET /health` (needs `curl` in the image — it's there) |
 
-### Two settings that are load-bearing
+### Three settings that are load-bearing
 
-- **`--shm-size=1g`.** Docker's default `/dev/shm` is 64 MB. Chrome uses shared
-  memory for renderer IPC and crashes or hangs under concurrency without it. The
-  repo's `docker-compose.yml` sets it; the Dockerfile build pack does not, so it
-  is set as a custom docker run option. Symptom if lost: L2 fails while L1 keeps
-  working.
-- **Connect to the predefined `coolify` network.** This is how the API resolves
-  the crawler by container name — the same mechanism the API already uses to
-  reach `supabase-db-*`. Without it the crawler is unreachable and `/web`
-  returns 503.
+- **Compose build pack, not Dockerfile.** This is what makes the hostname
+  stable. Coolify names Dockerfile-buildpack containers `<uuid>-<timestamp>` and
+  the timestamp changes on **every** deploy, so anything pointing at it breaks on
+  the next redeploy. Compose adds the **service name** as a network alias, so
+  `web-crawler` resolves forever. `--network-alias` in custom docker options does
+  **not** work — Coolify generates the alias list itself (verified in its
+  generated compose).
+- **`shm_size: 1gb`.** Docker's default `/dev/shm` is 64 MB. Chrome uses shared
+  memory for renderer IPC and crashes or hangs under concurrency without it.
+  Symptom if lost: L2 fails while L1 keeps working.
+- **`curl` in the image.** Coolify's healthcheck shells out to `curl`/`wget`;
+  `python:3.12-slim` ships neither, so a perfectly healthy app gets marked
+  unhealthy and the deploy **rolls back**. Added to the Dockerfile.
 
 ---
 
@@ -91,26 +95,36 @@ Raise `BROWSER_CONCURRENCY` toward 5 once you've watched real load in Beszel.
 Upstream measured **2.4x throughput** from tuning these, so there's headroom —
 take it with evidence, not optimism.
 
-`CRAWLER_ENABLED_TIERS=L1,L2` — free tiers only. To enable the paid catch-all,
-add `CRAWLER_WEB_UNLOCKER_KEY` + `CRAWLER_WEB_UNLOCKER_ZONE` and set
-`L1,L2,L4`. No code change, no redeploy of anything else.
+### L4 is drop-in — nothing to build
+
+`CRAWLER_ENABLED_TIERS=L1,L2` today: free tiers only, no credentials. The **paid
+catch-all is fully wired and dormant** — `build_fetchers()` has the `L4` branch,
+`config.py` has the settings, and `escalator` reports on `/health` why it's off.
+Turning it on is three env vars in Coolify and a redeploy, **no code change**:
+
+```
+CRAWLER_WEB_UNLOCKER_KEY=<key>
+CRAWLER_WEB_UNLOCKER_ZONE=<zone>
+CRAWLER_ENABLED_TIERS=L1,L2,L4
+```
+
+With it off, hard-walled sites return `bot_blocked` — never fabricated content.
 
 ---
 
-## Known limitation carried into production: the store is ephemeral
+## The store is ephemeral — by decision
 
 `CRAWLER_DB_URL=/srv/crawler.db` — **inside the container, no volume.** A redeploy
-or restart wipes job history.
+or restart wipes job history. **No retention policy, by decision** (2026-07-27).
 
-This is a deliberate trade, not an oversight. The upstream README's own known
-limits state the SQLite store **keeps every scraped page's HTML forever** and
-grows into gigabytes with no prune job. Attaching a volume without retention
-would make unbounded disk growth permanent on a production box; ephemeral
-self-limits. It costs little today because the queue is in-process anyway — a
-restart already loses in-flight jobs — and callers consume results within minutes
-of submitting.
+It's also the safe default: the upstream README's own known limits state the
+SQLite store **keeps every scraped page's HTML forever** and grows into gigabytes
+with no prune job, so a volume without retention would make unbounded disk growth
+permanent. Ephemeral self-limits. It costs little because the queue is in-process
+anyway — a restart already loses in-flight jobs — and callers consume results
+within minutes of submitting.
 
-**Attach a volume once a retention/prune job exists**, not before. Until then:
+If that changes, a volume needs a retention rule first. Until then:
 - Fetch `/web/jobs/{id}/results` promptly; don't treat the crawler as storage.
 - A restart between submit and results means re-submitting.
 
