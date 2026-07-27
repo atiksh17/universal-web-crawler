@@ -1,0 +1,27 @@
+# Compose file used by COOLIFY only. `docker-compose.yml` stays the local-dev
+# parity file (it publishes 8000 to the host, which is fine on a laptop).
+#
+# Why a separate file, and why compose at all:
+#
+#   1. STABLE HOSTNAME. Coolify names Dockerfile-buildpack containers
+#      `<uuid>-<timestamp>`, and the timestamp changes on EVERY deploy — so
+#      anything pointing at it breaks on the next redeploy. Compose services are
+#      named `<service>-<app-uuid>`, which is stable (the same reason
+#      `supabase-db-<uuid>` is addressable). The API reaches this at
+#      `http://web-crawler-<app-uuid>:8000`.
+#   2. NO PUBLISHED PORT. `expose` instead of `ports`: the crawler must be
+#      reachable only on the internal `coolify` network, never from the
+#      internet. It has no auth of its own — the only door is /web on the API,
+#      which enforces X-API-Key.
+#
+# Everything else (concurrency, tiers, chrome path) comes from Coolify env vars.
+services:
+  web-crawler:
+    build: .
+    expose:
+      - "8000"
+    # Headless Chrome uses shared memory for renderer IPC. Docker's default
+    # /dev/shm is 64MB and Chrome crashes or hangs under concurrency without
+    # this. Symptom if lost: L2 fails while L1 keeps working.
+    shm_size: "1gb"
+    restart: unless-stopped
