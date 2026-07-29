@@ -128,6 +128,33 @@ app.add_api_route(
 )
 
 
+# ---------------------------------------------------------------------------
+# /web-crawl/* — the path shape the enrichment-engine calls.
+#
+# That engine (world/projects/enrichment-engine) hardcodes `{base}/web-crawl/...`
+# in engine/clients/web_crawl.py, because it was written against the Nubeam
+# platform where this crawler sat under a /web-crawl namespace. Its source is
+# kept unmodified on purpose, so the namespace is provided HERE instead — five
+# additive routes, no behaviour of their own.
+#
+# Registered after the canonical handlers so /crawl stays the documented name;
+# these are hidden from the schema for the same reason as /scrape above.
+# ---------------------------------------------------------------------------
+app.add_api_route(
+    "/web-crawl/scrape", crawl, methods=["POST"], include_in_schema=False
+)
+app.add_api_route(
+    "/web-crawl/scrape/bulk",
+    crawl_bulk,
+    methods=["POST"],
+    status_code=202,
+    include_in_schema=False,
+)
+app.add_api_route(
+    "/web-crawl/health", health, methods=["GET"], include_in_schema=False
+)
+
+
 @app.get("/jobs/{job_id}")
 async def job_status(job_id: str):
     """Progress + lightweight per-URL summary (poll this)."""
@@ -152,3 +179,17 @@ async def job_results(job_id: str):
         for r in raw
     ]
     return {"job_id": job_id, "results": shaped}
+
+
+# Job routes under the same /web-crawl namespace (see the note above). Declared
+# here rather than with the block above because the handlers do not exist yet at
+# that point in the module.
+app.add_api_route(
+    "/web-crawl/jobs/{job_id}", job_status, methods=["GET"], include_in_schema=False
+)
+app.add_api_route(
+    "/web-crawl/jobs/{job_id}/results",
+    job_results,
+    methods=["GET"],
+    include_in_schema=False,
+)
