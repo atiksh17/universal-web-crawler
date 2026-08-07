@@ -44,6 +44,11 @@ class Settings(BaseSettings):
     web_unlocker_key: str = ""
     web_unlocker_zone: str = ""
 
+    # Public-door auth. Required on requests that arrive through the Traefik route
+    # (crawl.goautofusion.com); callers on the internal docker network are unaffected.
+    # See the auth block in app/api.py. Empty = the public door is shut (503), never open.
+    api_key: str = ""
+
     # Queue / store
     queue_backend: str = "memory"   # memory | redis
     redis_url: str = "redis://localhost:6379"

@@ -15,6 +15,31 @@ your reverse proxy adds if you put one in front.
 
 ---
 
+## Authentication
+
+Depends on which door you come in by — there are two, and only one needs a key.
+
+| Calling from | Base URL | Key |
+|---|---|---|
+| **Outside the box** (your laptop, a Vercel app, anything on the internet) | `https://crawl.goautofusion.com` | **required** — `X-API-Key: <key>` |
+| **Inside the box** (another container on the `coolify` network) | `http://web-crawler:8000` | none — the port is not published, so the docker network is the boundary |
+
+```bash
+curl -X POST https://crawl.goautofusion.com/crawl \
+  -H "X-API-Key: $CRAWLER_API_KEY" \
+  -H 'content-type: application/json' \
+  -d '{"url":"https://example.com"}'
+```
+
+A public call with a missing or wrong key gets `401`. `GET /health` is exempt from both,
+so it stays usable as an uptime check. The examples below use `localhost` for local dev —
+against the public URL, add the header to every one of them.
+
+The key lives in Coolify → **Projects → web-crawler → Environment Variables** as
+`CRAWLER_API_KEY`. Rotating it is: change it there, redeploy, update callers.
+
+---
+
 ## Option 1 — single URL (synchronous)
 
 Best for one-off lookups. Blocks until the page is scraped, returns the shaped payload.

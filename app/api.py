@@ -12,12 +12,18 @@ Routes:
 
 Output shaping mirrors `app/shape.py`: markdown is always returned; endpoints/meta/
 footerHtml/html are opt-in per request. See usage.md for the client guide.
+
+Auth: calls arriving through the public route (crawl.goautofusion.com) need
+`X-API-Key: $CRAWLER_API_KEY`; /health is exempt and in-network callers are not
+affected at all. See the auth block below for why it is split that way.
 """
 from __future__ import annotations
 
+import secrets
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Request
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
 from .config import get_settings
@@ -83,6 +89,39 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(title="Universal Crawler", version="1.0.0", lifespan=lifespan)
+
+
+# ----------------------------- auth -----------------------------
+# The crawler has no per-user auth and never should: it is a worker, not a product.
+# docker-compose.coolify.yaml publishes no host port for exactly that reason, so the
+# only way in from outside this box is the Traefik route on crawl.goautofusion.com —
+# and that route is public. Unguarded it is an open crawl proxy: anyone can drive the
+# headless-Chrome fleet, and /crawl/bulk takes 100k URLs a call. So: require a key.
+#
+# Enforced ONLY on requests that came through the proxy. Traefik always sets
+# X-Forwarded-For on what it forwards, while an in-network caller reaching us by
+# container name (the API's /web room, the enrichment-engine) connects straight to
+# the port and so never has it. That distinction is what keeps the internal callers
+# working untouched — the enrichment-engine's client is kept verbatim and sends no
+# headers at all (see the /web-crawl note below), so it could not send a key even if
+# we wanted it to. A public caller cannot forge its way past this by omitting the
+# header: Traefik appends X-Forwarded-For itself, after the request is already in.
+#
+# /health stays open so Docker's healthcheck and any uptime probe keep working. To put
+# the docs behind the key too, they already are — add them here to let them out again.
+_OPEN_PATHS = frozenset({"/health", "/web-crawl/health"})
+
+
+@app.middleware("http")
+async def require_api_key(request: Request, call_next):
+    if "x-forwarded-for" in request.headers and request.url.path not in _OPEN_PATHS:
+        expected = get_settings().api_key
+        if not expected:
+            # Fail closed. An unset key must never silently mean "open to the world".
+            return JSONResponse({"detail": "public access is not configured"}, 503)
+        if not secrets.compare_digest(request.headers.get("x-api-key", ""), expected):
+            return JSONResponse({"detail": "missing or invalid X-API-Key"}, 401)
+    return await call_next(request)
 
 
 # ----------------------------- routes -----------------------------
