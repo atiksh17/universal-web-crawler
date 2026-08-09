@@ -44,6 +44,9 @@ class ShapeFlags(BaseModel):
     footerHtml: bool = False
     html: bool = False
     selector: str | None = None
+    # Inline `[text](href)` in the markdown. Unset = auto: OFF when `endpoints` is on (the link
+    # tree already carries the URLs), ON otherwise. Set explicitly to override either way.
+    mdLinks: bool | None = None
 
 
 class ScrapeRequest(ShapeFlags):
@@ -58,7 +61,7 @@ def _opts(f: ShapeFlags) -> ShapeOptions:
     if f.selector and not f.html:
         raise HTTPException(400, "`selector` requires `html: true`")
     return ShapeOptions(endpoints=f.endpoints, meta=f.meta, footerHtml=f.footerHtml,
-                        html=f.html, selector=f.selector)
+                        html=f.html, selector=f.selector, md_links=f.mdLinks)
 
 
 # ----------------------------- lifecycle -----------------------------

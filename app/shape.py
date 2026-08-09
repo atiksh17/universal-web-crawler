@@ -19,14 +19,21 @@ _HEADINGS = {"h1": "#", "h2": "##", "h3": "###", "h4": "####", "h5": "#####", "h
 
 
 class ShapeOptions:
-    """Which optional fields the caller wants. All default OFF (markdown always on)."""
+    """Which optional fields the caller wants. All default OFF (markdown always on).
 
-    def __init__(self, endpoints=False, meta=False, footerHtml=False, html=False, selector=None):
+    `md_links` shapes the ALWAYS-on markdown: True keeps inline `[text](href)`, False emits the
+    anchor text alone. Default None = auto — off when `endpoints` is on, because the endpoints
+    list already carries every same-origin URL and repeating them inline just burns caller tokens.
+    """
+
+    def __init__(self, endpoints=False, meta=False, footerHtml=False, html=False, selector=None,
+                 md_links=None):
         self.endpoints = bool(endpoints)
         self.meta = bool(meta)
         self.footerHtml = bool(footerHtml)
         self.html = bool(html)
         self.selector = selector or None
+        self.md_links = (not self.endpoints) if md_links is None else bool(md_links)
 
 
 def domain_of(url: str) -> str:
@@ -34,7 +41,7 @@ def domain_of(url: str) -> str:
 
 
 # ----------------------------- markdown -----------------------------
-def _inline(node) -> str:
+def _inline(node, links: bool = True) -> str:
     out = []
     for c in node.iter(include_text=True):
         tag = c.tag
@@ -44,34 +51,34 @@ def _inline(node) -> str:
             continue
         elif tag == "a":
             href = (c.attributes.get("href") or "").strip()
-            txt = _inline(c).strip()
-            out.append(f"[{txt}]({href})" if href and txt else txt)
+            txt = _inline(c, links).strip()
+            out.append(f"[{txt}]({href})" if links and href and txt else txt)
         elif tag in ("strong", "b"):
-            out.append(f"**{_inline(c).strip()}**")
+            out.append(f"**{_inline(c, links).strip()}**")
         elif tag in ("em", "i"):
-            out.append(f"*{_inline(c).strip()}*")
+            out.append(f"*{_inline(c, links).strip()}*")
         elif tag == "br":
             out.append("\n")
         else:
-            out.append(_inline(c))
+            out.append(_inline(c, links))
     return "".join(out)
 
 
-def _block(node, parts: list) -> None:
+def _block(node, parts: list, links: bool = True) -> None:
     tag = node.tag
     if tag in _DROP:
         return
     if tag in _HEADINGS:
-        parts.append(f"\n{_HEADINGS[tag]} {_inline(node).strip()}\n")
+        parts.append(f"\n{_HEADINGS[tag]} {_inline(node, links).strip()}\n")
         return
     if tag in ("p", "blockquote"):
-        txt = _inline(node).strip()
+        txt = _inline(node, links).strip()
         if txt:
             parts.append(("> " + txt if tag == "blockquote" else txt) + "\n")
         return
     if tag in ("ul", "ol"):
         for li in node.css("li"):
-            t = _inline(li).strip()
+            t = _inline(li, links).strip()
             if t:
                 parts.append(f"- {t}")
         parts.append("")
@@ -80,10 +87,12 @@ def _block(node, parts: list) -> None:
         return  # handled inline by ancestors
     # generic container: recurse into children
     for c in node.iter(include_text=False):
-        _block(c, parts)
+        _block(c, parts, links)
 
 
-def to_markdown(html: str) -> str:
+def to_markdown(html: str, links: bool = True) -> str:
+    """Page text as markdown. `links=False` keeps anchor TEXT but drops the `(href)` — plain prose
+    for callers that read the URLs off the `endpoints` list instead."""
     if not html or not _HAS:
         return ""
     tree = HTMLParser(html)
@@ -92,7 +101,7 @@ def to_markdown(html: str) -> str:
         return ""
     parts: list = []
     for c in body.iter(include_text=False):
-        _block(c, parts)
+        _block(c, parts, links)
     md = "\n".join(parts)
     # collapse 3+ newlines to 2, trim
     while "\n\n\n" in md:
@@ -154,7 +163,7 @@ def shape_response(url: str, html: str, ok: bool, reason: str, opts: ShapeOption
     quality, bot_blocked = _quality(ok, reason)
     out = {
         "domain": domain_of(url),
-        "markdown": to_markdown(html),
+        "markdown": to_markdown(html, opts.md_links),
         "quality": quality,
         "bot_blocked": bot_blocked,
     }

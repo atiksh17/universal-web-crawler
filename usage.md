@@ -109,6 +109,15 @@ Add **optional** fields by setting flags in the request body. All default `false
 | `html: true` | `html` | full rendered HTML |
 | `selector: "<css>"` | (scopes `html`) | returns only the HTML of elements matching the CSS selector. **Requires `html: true`** (else `400`). |
 
+`mdLinks` shapes the always-on `markdown` instead of adding a field, so it's the one flag that
+isn't a plain `false` default:
+
+| value | markdown anchors |
+|---|---|
+| unset (default) | **auto** — links dropped when `endpoints: true`, kept when it's off. Anchor *text* always survives. |
+| `mdLinks: false` | never inline `(href)` — plain prose, even with `endpoints` off |
+| `mdLinks: true` | always inline `[text](href)`, even with `endpoints` on (pre-`mdLinks` behaviour) |
+
 ### Examples
 
 Markdown + meta tags + link tree:
