@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import secrets
 from contextlib import asynccontextmanager
+from typing import Literal
 
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import JSONResponse
@@ -44,9 +45,11 @@ class ShapeFlags(BaseModel):
     footerHtml: bool = False
     html: bool = False
     selector: str | None = None
-    # Inline `[text](href)` in the markdown. Unset = auto: OFF when `endpoints` is on (the link
-    # tree already carries the URLs), ON otherwise. Set explicitly to override either way.
-    mdLinks: bool | None = None
+    # How anchors render in the markdown: true/"inline" = `[text](href)`, false/"text" = the label
+    # alone, "strip" = drop the anchor entirely (no href, no label — link-only blocks vanish).
+    # Unset = auto: "text" when `endpoints` is on (the link tree already carries the URLs),
+    # "inline" otherwise. "strip" is never automatic — it can remove words a sentence needs.
+    mdLinks: bool | Literal["inline", "text", "strip"] | None = None
 
 
 class ScrapeRequest(ShapeFlags):

@@ -173,9 +173,10 @@ curl localhost:8000/health                    # tier status
 ```
 
 Output-shaping flags (all default off; markdown always returned): `endpoints`, `meta`,
-`footerHtml`, `html`, `selector` (scopes `html`, requires `html:true`), plus `mdLinks` — inline
-`[text](href)` in the markdown, auto-OFF when `endpoints:true` (the link tree already has the
-URLs), set it explicitly to force either way. See `usage.md`.
+`footerHtml`, `html`, `selector` (scopes `html`, requires `html:true`), plus `mdLinks` — how
+anchors render in the markdown: `true`/`"inline"` = `[text](href)`, `false`/`"text"` = label only,
+`"strip"` = drop the anchor entirely (link-only nav blocks vanish). Unset = auto: `text` when
+`endpoints:true` (the link tree already has the URLs), `inline` otherwise. See `usage.md`.
 
 **Mounting behind a gateway / into another app:** `app/api.py` is a plain FastAPI app —
 put any reverse proxy in front of it, or import its router pieces into a larger service.

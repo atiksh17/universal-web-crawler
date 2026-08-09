@@ -112,11 +112,19 @@ Add **optional** fields by setting flags in the request body. All default `false
 `mdLinks` shapes the always-on `markdown` instead of adding a field, so it's the one flag that
 isn't a plain `false` default:
 
-| value | markdown anchors |
+| value | anchor `<a href="/team">leadership team</a>` renders as |
 |---|---|
-| unset (default) | **auto** — links dropped when `endpoints: true`, kept when it's off. Anchor *text* always survives. |
-| `mdLinks: false` | never inline `(href)` — plain prose, even with `endpoints` off |
-| `mdLinks: true` | always inline `[text](href)`, even with `endpoints` on (pre-`mdLinks` behaviour) |
+| unset (default) | **auto** — `text` when `endpoints: true`, `inline` when it's off |
+| `true` / `"inline"` | `[leadership team](/team)` — the full markdown link |
+| `false` / `"text"` | `leadership team` — label kept, `(href)` dropped |
+| `"strip"` | *(nothing)* — no href, no label |
+
+**`"strip"` is for pages you're reading as prose, not as a site map.** A block that was only
+links — nav bar, footer menu, link list — collapses to nothing and disappears, which is the point.
+But an anchor inside a sentence takes its words with it: *"Meet our leadership team, and read the
+news."* becomes *"Meet our, and read the."* (spacing is closed up, the sense isn't). Use it when
+`endpoints: true` is already giving you the URLs and you want the chrome gone; use `false` when the
+markdown still has to read as English. It is never applied automatically.
 
 ### Examples
 
