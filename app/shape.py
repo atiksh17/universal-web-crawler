@@ -18,6 +18,29 @@ except Exception:  # pragma: no cover
 _DROP = {"script", "style", "noscript", "template", "svg"}
 _HEADINGS = {"h1": "#", "h2": "##", "h3": "###", "h4": "####", "h5": "#####", "h6": "######"}
 
+# Nothing inside these ever reaches the reader's eye, so nothing inside them reaches the markdown.
+_INVISIBLE = _DROP | {
+    "head", "title", "meta", "link", "base", "iframe", "object", "param", "source", "track",
+    "canvas", "map", "area", "audio", "video", "picture", "select", "option", "datalist", "dialog",
+}
+
+# Inline-level tags: their text belongs on the enclosing block's line, not a line of its own.
+_INLINE_TAGS = {
+    "a", "abbr", "b", "bdi", "bdo", "big", "cite", "code", "data", "del", "dfn", "em", "font",
+    "i", "img", "ins", "kbd", "mark", "nobr", "q", "rp", "rt", "ruby", "s", "samp", "small",
+    "span", "strong", "sub", "sup", "time", "u", "var", "wbr", "br", "-text",
+}
+
+# After these, a blank line keeps blocks from running together. List items stay out — they read
+# as one list, not one paragraph each.
+_SPACE_AFTER = {"p", "blockquote", "tr", "section", "article", "footer",
+                "header", "nav", "aside", "form", "figure", "figcaption", "main", "address"}
+
+# Markup often packs nav/menu anchors with no whitespace between them (`</a><a>`), which the
+# browser still spaces out via CSS. Without a separator they concatenate into one junk token.
+_SEPARATE = {"a", "button"}
+_NO_SEPARATE_AFTER = set("([{“‘\"'/–—-")
+
 
 class ShapeOptions:
     """Which optional fields the caller wants. All default OFF (markdown always on).
@@ -62,55 +85,174 @@ def domain_of(url: str) -> str:
 
 
 # ----------------------------- markdown -----------------------------
+def _hidden(node) -> bool:
+    """Markup-level invisibility only. Stylesheet-driven hiding isn't knowable without a layout
+    engine, so we honour what the tag itself declares and nothing more."""
+    a = node.attributes
+    if "hidden" in a:
+        return True
+    if (a.get("aria-hidden") or "").lower() == "true":
+        return True
+    style = (a.get("style") or "").lower().replace(" ", "")
+    if "display:none" in style or "visibility:hidden" in style:
+        return True
+    if node.tag == "input" and (a.get("type") or "").lower() == "hidden":
+        return True
+    return False
+
+
+def _inline_node(c, links: str = LINKS_INLINE) -> str:
+    """Render ONE inline node, itself included.
+
+    Split out of `_inline` because `_inline(node)` only ever formats a node's *descendants* —
+    hand it an `<a>` and you get the bare label, no `[..](href)` and no honouring of `strip`.
+    The block walker hands it single nodes constantly, so the dispatch has to live here."""
+    tag = c.tag
+    if tag == "-text":
+        return c.text(deep=False) or ""
+    if tag in _INVISIBLE or _hidden(c):
+        return ""
+    if tag == "a":
+        if links == LINKS_STRIP:          # anchor contributes nothing — not even its label
+            return ""
+        href = (c.attributes.get("href") or "").strip()
+        txt = _inline(c, links).strip()
+        return f"[{txt}]({href})" if links == LINKS_INLINE and href and txt else txt
+    if tag in ("strong", "b"):
+        return f"**{_inline(c, links).strip()}**"
+    if tag in ("em", "i"):
+        return f"*{_inline(c, links).strip()}*"
+    if tag == "br":
+        return "\n"
+    return _inline(c, links)
+
+
 def _inline(node, links: str = LINKS_INLINE) -> str:
-    out = []
-    for c in node.iter(include_text=True):
-        tag = c.tag
-        if tag == "-text":
-            out.append(c.text(deep=False) or "")
-        elif tag in _DROP:
-            continue
-        elif tag == "a":
-            if links == LINKS_STRIP:      # anchor contributes nothing — not even its label
-                continue
-            href = (c.attributes.get("href") or "").strip()
-            txt = _inline(c, links).strip()
-            out.append(f"[{txt}]({href})" if links == LINKS_INLINE and href and txt else txt)
-        elif tag in ("strong", "b"):
-            out.append(f"**{_inline(c, links).strip()}**")
-        elif tag in ("em", "i"):
-            out.append(f"*{_inline(c, links).strip()}*")
-        elif tag == "br":
-            out.append("\n")
-        else:
-            out.append(_inline(c, links))
-    return "".join(out)
+    return "".join(_inline_node(c, links) for c in node.iter(include_text=True))
 
 
-def _block(node, parts: list, links: str = LINKS_INLINE) -> None:
+def _is_block(node) -> bool:
+    """Block unless it's an inline tag holding only inline content.
+
+    The second half is what saves `<a><div>(02) 8339 0130</div></a>` — legal HTML5, and the
+    shape every button/contact-row in a div-built footer takes. Treated as inline, its text
+    would be buffered onto a parent line that may never be flushed."""
+    if node.tag not in _INLINE_TAGS:
+        return True
+    for d in node.iter(include_text=False):
+        if d.tag not in _INLINE_TAGS and d.tag not in _INVISIBLE:
+            return True
+    return False
+
+
+class _Bullet:
+    """A list marker waiting for a line to attach to. The first line emitted anywhere in the
+    `<li>`'s subtree takes the bullet; every later line takes the matching indent, so an item
+    whose text sits several divs deep still reads as one item."""
+
+    def __init__(self, indent: str = ""):
+        self.indent, self.used = indent, False
+
+    def take(self) -> str:
+        if self.used:
+            return self.indent + "  "
+        self.used = True
+        return self.indent + "- "
+
+
+def _flush(buf: list, parts: list, bullet=None) -> None:
+    """Emit the buffered inline run as one line."""
+    if not buf:
+        return
+    txt = "".join(buf)
+    buf.clear()
+    txt = re.sub(r"[ \t]*\n[ \t]*", "\n", txt)   # <br> runs
+    txt = re.sub(r"[ \t]{2,}", " ", txt)
+    txt = txt.strip()
+    if not txt:
+        return
+    if bullet is None:
+        parts.append(txt)
+        return
+    lines = txt.split("\n")
+    parts.append(bullet.take() + lines[0])
+    for extra in lines[1:]:
+        parts.append(bullet.take() + extra)
+
+
+def _table(node, parts: list, links: str) -> None:
+    """Pipe table. Cells were dropped wholesale before — every `td` fell through the allowlist."""
+    grid = []
+    for row in node.css("tr"):
+        cells = [_inline(c, links).strip().replace("|", "\\|").replace("\n", " ")
+                 for c in row.iter(include_text=False) if c.tag in ("td", "th")]
+        if any(cells):
+            grid.append(cells)
+    if not grid:
+        return
+    width = max(len(r) for r in grid)
+    grid = [r + [""] * (width - len(r)) for r in grid]
+    parts.append("| " + " | ".join(grid[0]) + " |")
+    parts.append("| " + " | ".join(["---"] * width) + " |")
+    for r in grid[1:]:
+        parts.append("| " + " | ".join(r) + " |")
+    parts.append("")
+
+
+def _block(node, parts: list, links: str = LINKS_INLINE, depth: int = 0, bullet=None) -> None:
+    """Walk one block node. Text is emitted by default; only proven-invisible nodes are skipped.
+
+    Inline children accumulate into a buffer that flushes as a single line whenever a block child
+    interrupts it — that's what puts a bare `<div>Services</div>` or a `<a>Book now</a>` into the
+    output, neither of which the old tag allowlist had a branch for."""
     tag = node.tag
-    if tag in _DROP:
+    if tag in _INVISIBLE or _hidden(node):
         return
+    if tag == "a" and links == LINKS_STRIP:
+        return          # block-wrapping anchor — `strip` means gone, same as the inline case
     if tag in _HEADINGS:
-        parts.append(f"\n{_HEADINGS[tag]} {_inline(node, links).strip()}\n")
-        return
-    if tag in ("p", "blockquote"):
         txt = _inline(node, links).strip()
         if txt:
-            parts.append(("> " + txt if tag == "blockquote" else txt) + "\n")
+            parts.append(f"\n{_HEADINGS[tag]} {txt}\n")
         return
-    if tag in ("ul", "ol"):
-        for li in node.css("li"):
-            t = _inline(li, links).strip()
-            if t:
-                parts.append(f"- {t}")
+    if tag == "table":
+        _table(node, parts, links)
+        return
+    if tag in ("ul", "ol", "dl"):
+        for c in node.iter(include_text=False):
+            if c.tag in ("li", "dt", "dd"):
+                _block(c, parts, links, depth + 1)
+            else:                                    # stray wrapper between list and items
+                _block(c, parts, links, depth, bullet)
         parts.append("")
         return
-    if tag in ("li", "a", "strong", "b", "em", "i", "span", "-text"):
-        return  # handled inline by ancestors
-    # generic container: recurse into children
-    for c in node.iter(include_text=False):
-        _block(c, parts, links)
+
+    if tag in ("li", "dd", "dt") and depth:
+        bullet = _Bullet("  " * (depth - 1))
+    start = len(parts)
+
+    buf: list = []
+    for c in node.iter(include_text=True):
+        if c.tag == "-text":
+            buf.append(c.text(deep=False) or "")
+        elif c.tag in _INVISIBLE or _hidden(c):
+            continue
+        elif not _is_block(c):
+            if (c.tag in _SEPARATE and buf and buf[-1]
+                    and buf[-1][-1] not in _NO_SEPARATE_AFTER and not buf[-1][-1].isspace()):
+                buf.append(" ")
+            buf.append(_inline_node(c, links))
+        else:
+            _flush(buf, parts, bullet)
+            _block(c, parts, links, depth, bullet)
+    _flush(buf, parts, bullet)
+
+    if tag == "blockquote":
+        for i in range(start, len(parts)):
+            if parts[i].strip():
+                parts[i] = "> " + parts[i]
+    if tag in _SPACE_AFTER:
+        parts.append("")
 
 
 def to_markdown(html: str, links: str = LINKS_INLINE) -> str:
@@ -129,15 +271,19 @@ def to_markdown(html: str, links: str = LINKS_INLINE) -> str:
     if body is None:
         return ""
     parts: list = []
-    for c in body.iter(include_text=False):
-        _block(c, parts, links)
+    _block(body, parts, links)
     md = "\n".join(parts)
     if links == LINKS_STRIP:
         # A removed anchor leaves a hole mid-sentence: "read the  ." Close the gap so the prose
         # that survives reads cleanly (run-together spaces, then space-before-punctuation).
-        md = re.sub(r"[ \t]{2,}", " ", md)
-        md = re.sub(r" +([,.;:!?)\]])", r"\1", md)
-        md = re.sub(r"([(\[]) +", r"\1", md)
+        # Leading indent is skipped — it carries nested-list depth, not a hole.
+        def _close_gaps(line: str) -> str:
+            lead = line[:len(line) - len(line.lstrip(" \t"))]
+            rest = re.sub(r"[ \t]{2,}", " ", line[len(lead):])
+            rest = re.sub(r" +([,.;:!?)\]])", r"\1", rest)
+            return lead + re.sub(r"([(\[]) +", r"\1", rest)
+
+        md = "\n".join(_close_gaps(ln) for ln in md.split("\n"))
     # collapse 3+ newlines to 2, trim
     while "\n\n\n" in md:
         md = md.replace("\n\n\n", "\n\n")
