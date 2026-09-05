@@ -13,18 +13,25 @@ Routes:
 Output shaping mirrors `app/shape.py`: markdown is always returned; endpoints/meta/
 footerHtml/html are opt-in per request. See usage.md for the client guide.
 
-Auth: calls arriving through the public route (crawl.goautofusion.com) need
+Auth: calls arriving through the public route (crawl.lrc-limited.com) need
 `X-API-Key: $CRAWLER_API_KEY`; /health is exempt and in-network callers are not
 affected at all. See the auth block below for why it is split that way.
 """
 from __future__ import annotations
 
+import asyncio
+import glob
+import json
+import os
 import secrets
+import shutil
+import tempfile
+import time
 from contextlib import asynccontextmanager
 from typing import Literal
 
-from fastapi import FastAPI, HTTPException, Request
-from fastapi.responses import JSONResponse
+from fastapi import FastAPI, HTTPException, Query, Request
+from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel, Field
 
 from .config import get_settings
@@ -57,6 +64,10 @@ class ScrapeRequest(ShapeFlags):
 
 
 class BulkRequest(ShapeFlags):
+    # The hard ceiling here is a backstop against a pathological request body; the
+    # ceiling that actually applies is CRAWLER_MAX_URLS_PER_JOB, checked in the
+    # handler so it stays tunable without a code change. See the per-job bounds
+    # note in config.py.
     urls: list[str] = Field(..., min_length=1, max_length=100_000)
 
 
@@ -68,6 +79,41 @@ def _opts(f: ShapeFlags) -> ShapeOptions:
 
 
 # ----------------------------- lifecycle -----------------------------
+async def _sweep_loop(app: FastAPI) -> None:
+    """Retention sweep: expire old jobs and the temp Chrome profiles they left behind.
+
+    Both leak without it. The store grew to 3.4 GB of HTML across 13 jobs, and
+    nodriver's per-fetch profile dirs had piled up 3,146 deep (1.5 GB) because
+    Chromium keeps writing into the directory after the fetch path rmtree's it.
+    """
+    s = app.state.s
+    while True:
+        await asyncio.sleep(s.sweep_interval_s)
+        try:
+            dropped = await app.state.store.purge_jobs_older_than(
+                s.job_retention_hours * 3600)
+            for job_id in dropped:
+                app.state.job_opts.pop(job_id, None)
+        except Exception:
+            pass
+        try:
+            _sweep_temp_profiles(s.sweep_interval_s)
+        except Exception:
+            pass
+
+
+def _sweep_temp_profiles(min_age_s: float) -> None:
+    """Remove `cr-prof-*` dirs no longer in use. Age-gated so a profile belonging to
+    an in-flight fetch is never pulled out from under a live browser."""
+    cutoff = time.time() - max(min_age_s, 300)
+    for p in glob.glob(os.path.join(tempfile.gettempdir(), "cr-prof-*")):
+        try:
+            if os.path.getmtime(p) < cutoff:
+                shutil.rmtree(p, ignore_errors=True)
+        except OSError:
+            pass
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Build the runtime from .env, start the worker pool, tear it all down on exit."""
@@ -77,7 +123,9 @@ async def lifespan(app: FastAPI):
     escalator = Escalator(s)
     throttler = Throttler(s.global_concurrency, s.per_domain_concurrency,
                           s.per_domain_min_interval_ms)
-    jobs = JobManager(escalator, store, throttler, worker_count=s.worker_count)
+    jobs = JobManager(escalator, store, throttler, worker_count=s.worker_count,
+                      max_page_html_bytes=s.max_page_html_bytes,
+                      max_job_html_bytes=s.max_job_html_bytes)
     jobs.start()
     app.state.s = s
     app.state.store = store
@@ -85,10 +133,19 @@ async def lifespan(app: FastAPI):
     app.state.jobs = jobs
     # Shaping flags per bulk job, applied at /jobs/{id}/results. In-memory: a restart
     # drops them and /results falls back to markdown-only (re-submit to re-shape).
+    # Evicted alongside the job itself by the sweep, or it outlives every job it
+    # describes and becomes a slow leak of its own.
     app.state.job_opts = {}
+    _sweep_temp_profiles(0)  # clear whatever the last run leaked before serving
+    sweeper = asyncio.create_task(_sweep_loop(app))
     try:
         yield
     finally:
+        sweeper.cancel()
+        try:
+            await sweeper
+        except asyncio.CancelledError:
+            pass
         await jobs.stop()
         await escalator.aclose()
         await store.close()
@@ -100,7 +157,7 @@ app = FastAPI(title="Universal Crawler", version="1.0.0", lifespan=lifespan)
 # ----------------------------- auth -----------------------------
 # The crawler has no per-user auth and never should: it is a worker, not a product.
 # docker-compose.coolify.yaml publishes no host port for exactly that reason, so the
-# only way in from outside this box is the Traefik route on crawl.goautofusion.com —
+# only way in from outside this box is the Traefik route on crawl.lrc-limited.com —
 # and that route is public. Unguarded it is an open crawl proxy: anyone can drive the
 # headless-Chrome fleet, and /crawl/bulk takes 100k URLs a call. So: require a key.
 #
@@ -151,6 +208,13 @@ async def crawl(req: ScrapeRequest):
 async def crawl_bulk(req: BulkRequest):
     """Bulk: dump URLs, get a job_id. Shaping flags are applied at /jobs/{id}/results."""
     opts = _opts(req)
+    cap = app.state.s.max_urls_per_job
+    if cap and len(req.urls) > cap:
+        raise HTTPException(
+            413,
+            f"{len(req.urls)} URLs exceeds the {cap}-URL per-job limit; split the "
+            f"batch across jobs (raise CRAWLER_MAX_URLS_PER_JOB to change this)",
+        )
     job_id = await app.state.jobs.submit_bulk(req.urls)
     app.state.job_opts[job_id] = opts
     return {"job_id": job_id, "total": len(req.urls)}
@@ -202,7 +266,12 @@ app.add_api_route(
 
 @app.get("/jobs/{job_id}")
 async def job_status(job_id: str):
-    """Progress + lightweight per-URL summary (poll this)."""
+    """Progress + lightweight per-URL summary (poll this).
+
+    Deliberately free of HTML. Callers poll this once a second for the life of a job,
+    so its cost has to stay flat in the size of what has been crawled — see the note
+    on Store.get_results for what happens when it doesn't.
+    """
     job = await app.state.store.get_job(job_id)
     if not job:
         raise HTTPException(404, "job not found")
@@ -210,20 +279,81 @@ async def job_status(job_id: str):
     return job
 
 
+def _shape_row(r: dict, opts: ShapeOptions) -> dict:
+    item = {**shape_response(r["url"], r.get("html", ""), r["ok"],
+                             r.get("reason", ""), opts),
+            "url": r["url"], "tier": r["tier"]}
+    # Say so when the stored body is not the whole page, rather than letting a
+    # budget-trimmed result read as a genuinely short one.
+    if r["html_state"] != "full":
+        item["html_state"] = r["html_state"]
+        item["content_length"] = r["content_length"]
+    r["html"] = ""  # release the source HTML as soon as it has been shaped
+    return item
+
+
+async def _stream_results(job_id: str, total: int, opts: ShapeOptions, chunk: int):
+    """Emit the full result set as JSON without ever holding all of it.
+
+    Callers (the n8n Web Crawler workflow, the enrichment-engine) ask for a job's
+    results in one GET and expect one array back, so paginating by default would
+    silently truncate them. Streaming keeps that contract exactly while bounding
+    server memory to one `chunk` of rows: shape a slice, write it, drop it.
+    """
+    head = json.dumps({"job_id": job_id, "total": total})[:-1]  # trim the closing brace
+    yield f'{head},"results":['
+    first = True
+    offset = 0
+    while offset < total:
+        rows = await app.state.store.get_results(
+            job_id, include_html=True, limit=chunk, offset=offset)
+        if not rows:
+            break
+        for r in rows:
+            yield ("" if first else ",") + json.dumps(_shape_row(r, opts))
+            first = False
+        offset += len(rows)
+    yield "]}"
+
+
 @app.get("/jobs/{job_id}/results")
-async def job_results(job_id: str):
-    """Final shaped results — shaped with the flags sent at submit time."""
+async def job_results(
+    job_id: str,
+    limit: int | None = Query(None, ge=1),
+    offset: int = Query(0, ge=0),
+):
+    """Final shaped results — shaped with the flags sent at submit time.
+
+    Default: the whole set, streamed (same `{job_id, results:[...]}` shape callers
+    already parse). Pass `limit` to get one explicit page instead, plus a
+    `next_offset` to walk with — useful when the caller wants to bound its own
+    memory too.
+
+    Either way the server never materialises the whole corpus: shaping holds a
+    page's HTML *and* its markdown at once, so doing a few thousand pages in one
+    go was several GB of peak RSS.
+    """
+    s = app.state.s
     job = await app.state.store.get_job(job_id)
     if not job:
         raise HTTPException(404, "job not found")
     opts = app.state.job_opts.get(job_id, ShapeOptions())
-    raw = await app.state.store.get_results(job_id, include_html=True)
-    shaped = [
-        {**shape_response(r["url"], r.get("html", ""), r["ok"], r.get("reason", ""), opts),
-         "url": r["url"], "tier": r["tier"]}
-        for r in raw
-    ]
-    return {"job_id": job_id, "results": shaped}
+    total = await app.state.store.count_results(job_id)
+
+    if limit is not None:
+        limit = min(limit, s.max_results_page_size)
+        raw = await app.state.store.get_results(job_id, include_html=True,
+                                                limit=limit, offset=offset)
+        shaped = [_shape_row(r, opts) for r in raw]
+        nxt = offset + len(shaped)
+        return {"job_id": job_id, "results": shaped, "total": total,
+                "offset": offset, "limit": limit,
+                "next_offset": nxt if nxt < total else None}
+
+    return StreamingResponse(
+        _stream_results(job_id, total, opts, s.stream_chunk_rows),
+        media_type="application/json",
+    )
 
 
 # Job routes under the same /web-crawl namespace (see the note above). Declared

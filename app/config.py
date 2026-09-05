@@ -45,7 +45,7 @@ class Settings(BaseSettings):
     web_unlocker_zone: str = ""
 
     # Public-door auth. Required on requests that arrive through the Traefik route
-    # (crawl.goautofusion.com); callers on the internal docker network are unaffected.
+    # (crawl.lrc-limited.com); callers on the internal docker network are unaffected.
     # See the auth block in app/api.py. Empty = the public door is shut (503), never open.
     api_key: str = ""
 
@@ -54,6 +54,21 @@ class Settings(BaseSettings):
     redis_url: str = "redis://localhost:6379"
     store_backend: str = "sqlite"   # sqlite | postgres
     db_url: str = "crawler.db"
+
+    # --- Per-job bounds -----------------------------------------------------
+    # This is a shared worker in a container with a hard 4 GiB cap, so a single
+    # job must not be able to cost unbounded memory or disk. Sep 2026: one bulk
+    # job did exactly that and the kernel OOM-killed uvicorn mid-crawl, taking
+    # the n8n executions waiting on it down with it. Each knob below bounds one
+    # of the ways a job grows. 0 disables that particular bound.
+    max_urls_per_job: int = 5_000          # URLs accepted by one /crawl/bulk call
+    max_page_html_bytes: int = 2_000_000   # 2 MB — a single page beyond this is truncated
+    max_job_html_bytes: int = 300_000_000  # 300 MB — past this a job stops storing bodies
+    results_page_size: int = 500           # default page size for /jobs/{id}/results
+    max_results_page_size: int = 2_000     # ceiling a caller may request
+    stream_chunk_rows: int = 100           # rows held in memory per chunk when streaming
+    job_retention_hours: float = 24.0      # purge jobs (and their rows) older than this
+    sweep_interval_s: float = 900.0        # how often the retention/tmp sweep runs
 
     @property
     def tiers(self) -> list[str]:

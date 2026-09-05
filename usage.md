@@ -21,11 +21,11 @@ Depends on which door you come in by — there are two, and only one needs a key
 
 | Calling from | Base URL | Key |
 |---|---|---|
-| **Outside the box** (your laptop, a Vercel app, anything on the internet) | `https://crawl.goautofusion.com` | **required** — `X-API-Key: <key>` |
+| **Outside the box** (your laptop, a Vercel app, anything on the internet) | `https://crawl.lrc-limited.com` | **required** — `X-API-Key: <key>` |
 | **Inside the box** (another container on the `coolify` network) | `http://web-crawler:8000` | none — the port is not published, so the docker network is the boundary |
 
 ```bash
-curl -X POST https://crawl.goautofusion.com/crawl \
+curl -X POST https://crawl.lrc-limited.com/crawl \
   -H "X-API-Key: $CRAWLER_API_KEY" \
   -H 'content-type: application/json' \
   -d '{"url":"https://example.com"}'
@@ -83,6 +83,35 @@ curl http://localhost:8000/jobs/abc123/results
 
 `state` goes `running` -> `done`. Each result in `/results` also carries `url` and `tier`
 so you can map it back.
+
+### Per-job limits
+
+A job is bounded so one big list cannot exhaust the service (see `.env.example`):
+
+| Limit | Default | What happens at the limit |
+|---|---|---|
+| URLs per job | 5,000 | `POST /crawl/bulk` returns **413** — split the batch |
+| Bytes per page | 2 MB | page stored truncated, `html_state: "truncated"` |
+| Bytes per job | 300 MB | later rows keep their metadata but drop the body, `html_state: "dropped"` |
+| Job retention | 24 h | the job and its rows are purged |
+
+`content_length` always reports the page's **true** size, so a trimmed result never
+reads as a genuinely short one — compare it against `html_state` to tell them apart.
+
+`GET /jobs/{id}` is safe to poll at any rate: it never reads page bodies, so its cost
+does not grow with the job.
+
+`GET /jobs/{id}/results` returns **every** row by default, streamed — the response is
+the same `{"job_id", "results": [...]}` object it always was, just written incrementally
+so neither side has to hold the whole corpus. Pass `?limit=` to page through it
+explicitly instead:
+
+```bash
+curl 'http://localhost:8000/jobs/abc123/results?limit=500&offset=0'
+# -> {..., "total": 1200, "offset": 0, "limit": 500, "next_offset": 500}
+```
+
+Follow `next_offset` until it comes back `null`.
 
 ---
 
@@ -179,3 +208,5 @@ an empty shell is **not** reported as success.
   operator's concurrency settings. Poll `/jobs/{id}` for live `done`/`total`.
 - **Bulk shaping is set at submit time** and applied when you GET `/results`. To re-shape
   the same job differently, re-submit.
+- **Results expire.** Jobs are purged 24 h after submit (`CRAWLER_JOB_RETENTION_HOURS`),
+  so fetch `/results` in the same run rather than coming back for them tomorrow.

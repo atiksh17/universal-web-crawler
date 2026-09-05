@@ -19,11 +19,16 @@ class JobManager:
     """
 
     def __init__(self, escalator: Escalator, store: Store, throttler: Throttler,
-                 worker_count: int = 4):
+                 worker_count: int = 4, max_page_html_bytes: int = 0,
+                 max_job_html_bytes: int = 0):
         self.escalator = escalator
         self.store = store
         self.throttler = throttler
         self.worker_count = worker_count
+        # Per-job storage budgets, enforced in Store.save_result. Held here because
+        # the worker body is the only thing that writes results.
+        self.max_page_html_bytes = max_page_html_bytes
+        self.max_job_html_bytes = max_job_html_bytes
         self._queue: asyncio.Queue[tuple[str, str]] = asyncio.Queue()
         self._workers: list[asyncio.Task] = []
 
@@ -62,7 +67,14 @@ class JobManager:
     async def _process(self, job_id: str, url: str) -> None:
         async with self.throttler.slot(url):
             outcome = await self.escalator.crawl(url)
-        await self.store.save_result(job_id, outcome)
+        await self.store.save_result(
+            job_id, outcome,
+            max_page_bytes=self.max_page_html_bytes,
+            max_job_bytes=self.max_job_html_bytes,
+        )
+        # The outcome holds the page's full HTML; without this it stays reachable
+        # from the frame until the next loop iteration rebinds it.
+        outcome.html = ""
 
     async def _maybe_finish(self, job_id: str) -> None:
         job = await self.store.get_job(job_id)

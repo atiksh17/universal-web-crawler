@@ -11,7 +11,7 @@ Infrastructure notes for *our* deployment. The upstream product docs are
    internet                    coolify docker network (private)
       │
       ▼
-  api.goautofusion.com  ──/web/*──▶  web-crawler:8000
+  api.lrc-limited.com  ──/web/*──▶  web-crawler:8000
   (Coolify app "api")               (Coolify app "web-crawler")
    public · X-API-Key                no domain · no auth · not reachable from outside
 ```
@@ -160,15 +160,15 @@ unchanged, so a new crawler route needs no change on the API side.
 
 ```bash
 # is the room open?
-curl -H "X-API-Key: <key>" https://api.goautofusion.com/web/health
+curl -H "X-API-Key: <key>" https://api.lrc-limited.com/web/health
 
 # one page (synchronous — can take tens of seconds on a hard site)
-curl -X POST https://api.goautofusion.com/web/crawl \
+curl -X POST https://api.lrc-limited.com/web/crawl \
   -H "X-API-Key: <key>" -H 'content-type: application/json' \
   -d '{"url":"https://example.com"}'
 
 # many pages (returns immediately, then poll)
-curl -X POST https://api.goautofusion.com/web/crawl/bulk \
+curl -X POST https://api.lrc-limited.com/web/crawl/bulk \
   -H "X-API-Key: <key>" -H 'content-type: application/json' \
   -d '{"urls":["https://a.com","https://b.com"]}'
 ```
