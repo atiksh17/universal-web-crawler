@@ -24,6 +24,19 @@ services:
     # /dev/shm is 64MB and Chrome crashes or hangs under concurrency without
     # this. Symptom if lost: L2 fails while L1 keeps working.
     shm_size: "1gb"
+    # Hard memory cap. The limits set in Coolify's own "Resource Limits" UI do
+    # NOT apply to a compose build pack — Coolify injects those only for the
+    # Dockerfile/nixpacks packs and otherwise uses this file verbatim, so a
+    # container recreated from here comes up unbounded unless the cap lives
+    # HERE. That is not academic: this crawler ran unbounded to 5.3 GB on an
+    # 11 GB box, drove the host deep into swap, and took the n8n task runner
+    # down with it (Sep 2026). memswap_limit == mem_limit disables swap for
+    # the container, so it is killed and restarted rather than allowed to
+    # thrash the whole box. Per-job bounds (app/config.py) keep it well under
+    # this ceiling; the ceiling is the backstop for when they don't.
+    mem_limit: 4g
+    memswap_limit: 4g
+    mem_reservation: 3g
     restart: unless-stopped
     # Compose deployments need the healthcheck HERE — Coolify's app-level
     # health-check setting only applies to the Dockerfile build pack, so without
